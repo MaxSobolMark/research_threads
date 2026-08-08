@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research Threads</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='34' fill='%23C15F3C'/></svg>">
+</head>
+<body>
+
+<div class="shell" id="shell">
+  <aside class="side" id="side">
+    <div class="side-head">
+      <h1 class="wordmark">Research <em>Threads</em></h1>
+      <button class="side-toggle" id="side-collapse" title="collapse sidebar">⟨</button>
+    </div>
+    <input id="filter" class="filter" type="search" placeholder="filter threads" spellcheck="false" autocomplete="off">
+    <nav id="side-list" class="side-list"></nav>
+    <div class="side-foot">
+      <span id="conn" class="conn"><span class="conn-dot"></span><span id="conn-label">connecting</span></span>
+    </div>
+  </aside>
+
+  <main class="field" id="field">
+    <button class="side-toggle floating" id="side-open" title="show sidebar" hidden>⟩</button>
+    <div class="bubbles" id="bubbles"></div>
+    <div class="field-empty" id="field-empty" hidden>
+      <p class="empty-line">No active threads.</p>
+      <p class="empty-sub">Tell your agent to track one:&nbsp; <code>rt start name -o "objective"</code></p>
+    </div>
+  </main>
+</div>
+
+<div id="backdrop" class="backdrop" hidden></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

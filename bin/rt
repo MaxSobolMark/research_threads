@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""rt — the Research Threads dashboard CLI, for agents and humans.
+
+Threads exist only when explicitly started. The current thread is inferred
+from $CLAUDE_VTERM_NAME (set by Emacs when the vterm was launched) and the
+working directory, so after `rt start` no thread id is ever needed.
+
+Usage:
+  rt start value-fn-probe -o "Test whether the value fn explains collapse"
+                                  # register this session as a research thread
+  rt update "Sweep running (3 seeds). TODO: analyze failure eps, try lr 1e-4"
+                                  # replace the thread's Current Status section
+  rt objective "…"                # revise the thread's objective line
+  rt note "lr=3e-4 diverges after 40k steps"
+  rt note -                       # read the note text from stdin
+  rt plot results/loss_curve.png -m "Loss vs. baseline, seed 0-4"
+  rt link https://wandb.ai/run/abc -m "wandb run"
+  rt whoami                       # show which thread rt would post to
+  rt threads                      # list all threads and their statuses
+  rt open                         # open the web dashboard
+  rt serve                        # start the server if it isn't running
+
+Options:
+  -o, --objective TEXT one-line objective (with `rt start`)
+  -m, --message TEXT   caption for plots / links
+  -k, --kind KIND      note kind (default: note)
+  -a, --author NAME    override author (default: inferred agent or 'max')
+  -t, --thread ID      target an explicit thread id
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+PORT = int(os.environ.get("RESEARCH_THREADS_PORT", "7878"))
+BASE = "http://localhost:%d" % PORT
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+def infer_author():
+    if os.environ.get("RT_AUTHOR"):
+        return os.environ["RT_AUTHOR"]
+    if os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
+        return "claude"
+    if os.environ.get("CODEX_HOME") or os.environ.get("CODEX_SANDBOX"):
+        return "codex"
+    return "max"
+
+
+def identity(args):
+    ident = {"cwd": os.getcwd(), "author": args.get("author") or infer_author()}
+    if args.get("thread"):
+        ident["thread_id"] = int(args["thread"])
+    if os.environ.get("CLAUDE_VTERM_NAME"):
+        ident["vterm"] = os.environ["CLAUDE_VTERM_NAME"]
+    return ident
+
+
+def call(method, path, body=None):
+    req = urllib.request.Request(
+        BASE + path,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers={"Content-Type": "application/json"},
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except ValueError:
+            return {"error": "HTTP %s" % e.code}
+    except (urllib.error.URLError, OSError):
+        return None  # server not running
+
+
+def ensure_server():
+    if call("GET", "/api/health"):
+        return True
+    server = os.path.join(REPO, "server.py")
+    subprocess.Popen(["python3", server], stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(20):
+        time.sleep(0.25)
+        if call("GET", "/api/health"):
+            return True
+    return False
+
+
+def fail(msg):
+    print("rt: %s" % msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def parse(argv):
+    """Tiny arg parser: returns (command, positionals, options)."""
+    if not argv:
+        print(__doc__.strip())
+        sys.exit(0)
+    cmd, rest, pos, opts = argv[0], argv[1:], [], {}
+    flags = {"-m": "message", "--message": "message", "-k": "kind", "--kind": "kind",
+             "-a": "author", "--author": "author", "-t": "thread", "--thread": "thread",
+             "-o": "objective", "--objective": "objective"}
+    i = 0
+    while i < len(rest):
+        if rest[i] in flags:
+            if i + 1 >= len(rest):
+                fail("missing value for %s" % rest[i])
+            opts[flags[rest[i]]] = rest[i + 1]
+            i += 2
+        else:
+            pos.append(rest[i])
+            i += 1
+    return cmd, pos, opts
+
+
+AGE_STEPS = ((86400 * 365, "y"), (86400 * 30, "mo"), (86400 * 7, "w"),
+             (86400, "d"), (3600, "h"), (60, "m"))
+
+
+def age(ts):
+    d = max(0, int(time.time()) - ts)
+    for step, label in AGE_STEPS:
+        if d >= step:
+            return "%d%s" % (d // step, label)
+    return "now"
+
+
+def main():
+    cmd, pos, opts = parse(sys.argv[1:])
+
+    if cmd in ("help", "-h", "--help"):
+        print(__doc__.strip())
+        return
+
+    if cmd == "serve":
+        ok = ensure_server()
+        print("server %s at %s" % ("running" if ok else "FAILED to start", BASE))
+        sys.exit(0 if ok else 1)
+
+    if cmd == "open":
+        ensure_server()
+        subprocess.Popen(["open", BASE])
+        return
+
+    if not ensure_server():
+        fail("could not reach or start the server (%s)" % BASE)
+
+    if cmd == "start":
+        body = {**identity(opts), "name": " ".join(pos)}
+        if opts.get("objective"):
+            body["objective"] = opts["objective"]
+        resp = call("POST", "/api/register", body)
+        if not resp or resp.get("error"):
+            fail((resp or {}).get("error", "server unreachable"))
+        print("thread started -> %s (#%s)" % (resp["thread"], resp["thread_id"]))
+
+    elif cmd in ("update", "objective"):
+        text = " ".join(pos)
+        if text == "-" or not text:
+            text = sys.stdin.read().strip()
+        if not text:
+            fail("empty text")
+        body = {**identity(opts), "text": text}
+        resp = call("POST", "/api/status" if cmd == "update" else "/api/objective", body)
+        if not resp or resp.get("error"):
+            fail((resp or {}).get("error", "server unreachable"))
+        print("%s set -> %s" % ("status" if cmd == "update" else "objective", resp["thread"]))
+
+    elif cmd == "note":
+        text = " ".join(pos)
+        if text == "-" or not text:
+            text = sys.stdin.read().strip()
+        if not text:
+            fail("empty note")
+        body = {**identity(opts), "text": text, "kind": opts.get("kind", "note")}
+        resp = call("POST", "/api/notes", body)
+        if not resp or resp.get("error"):
+            fail((resp or {}).get("error", "server unreachable"))
+        print("noted -> %s" % resp["thread"])
+
+    elif cmd == "plot":
+        if not pos:
+            fail("usage: rt plot FILE [-m caption]")
+        body = {**identity(opts), "path": os.path.abspath(pos[0]),
+                "caption": opts.get("message")}
+        resp = call("POST", "/api/plots", body)
+        if not resp or resp.get("error"):
+            fail((resp or {}).get("error", "server unreachable"))
+        print("plot -> thread #%s (%s%s)" % (resp["thread_id"], BASE, resp["url"]))
+
+    elif cmd == "link":
+        if not pos:
+            fail("usage: rt link URL [-m text]")
+        text = "%s %s" % (pos[0], opts.get("message", "")) if opts.get("message") else pos[0]
+        body = {**identity(opts), "text": text, "kind": "link"}
+        resp = call("POST", "/api/notes", body)
+        if not resp or resp.get("error"):
+            fail((resp or {}).get("error", "server unreachable"))
+        print("linked -> %s" % resp["thread"])
+
+    elif cmd in ("whoami", "status"):
+        ident = identity(opts)
+        print("vterm : %s" % ident.get("vterm", "(none — will match by cwd)"))
+        print("cwd   : %s" % ident["cwd"])
+        print("author: %s" % ident["author"])
+
+    elif cmd == "threads":
+        snap = call("GET", "/api/state")
+        if not snap:
+            fail("server unreachable")
+        for t in snap["threads"]:
+            if t["archived"]:
+                continue
+            status = "unread" if t.get("unread") else t["status"]
+            mark = {"working": "*", "needs-permission": "!", "needs-attention": "!",
+                    "unread": "+", "idle": "-"}.get(status, " ")
+            bg = " ".join("%d%s" % (t["background"][k], g)
+                          for k, g in (("agents", "@"), ("monitors", "~"),
+                                       ("commands", ">"))
+                          if (t.get("background") or {}).get(k))
+            print("%s %-28s %-7s %-16s %-8s %6s  %s" % (
+                mark, t["name"][:28], t["agent"] or "?", status, bg,
+                age(t["last_active_at"]), t["cwd"] or ""))
+
+    else:
+        fail("unknown command %r (try: rt help)" % cmd)
+
+
+if __name__ == "__main__":
+    main()
