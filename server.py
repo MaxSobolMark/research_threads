@@ -851,6 +851,34 @@ def thread_detail(store, monitor, tid):
 
 
 # ---------------------------------------------------------------------------
+# Request origin checks
+#
+# Binding 127.0.0.1 keeps other machines out, but not other programs on this
+# one: any page open in a browser can POST here, and a DNS-rebinding attack
+# can make a remote site look local. Two headers settle both. Every legitimate
+# client — rt, Emacs, the dashboard itself — reaches us as localhost, and the
+# only page entitled to change anything is the one we serve.
+
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
+
+
+def host_is_local(header):
+    """True if a Host header names this machine. '[::1]:7878' -> '[::1]'."""
+    if not header:
+        return False
+    host = header.partition("]")[0] + "]" if header.startswith("[") else header.partition(":")[0]
+    return host in LOCAL_HOSTS
+
+
+def origin_is_local(header):
+    """True if an Origin header is our own page. 'null' and remotes are not."""
+    try:
+        return urllib.parse.urlparse(header).hostname in LOCAL_HOSTS
+    except ValueError:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Thread resolution for agent-submitted notes
 
 def resolve_target_thread(store, monitor, body):
@@ -949,6 +977,19 @@ def make_handler(store, hub, monitor):
             except ValueError:
                 return {}
 
+        def guard(self, writing=False):
+            """Refuse anything that is not a local client, or (for writes) a
+            request driven by a foreign web page. Returns False once it has
+            already answered the request."""
+            if not host_is_local(self.headers.get("Host")):
+                self.send_json({"error": "forbidden"}, 403)
+                return False
+            origin = self.headers.get("Origin")
+            if writing and origin and not origin_is_local(origin):
+                self.send_json({"error": "forbidden"}, 403)
+                return False
+            return True
+
         def serve_file(self, path):
             try:
                 data = path.read_bytes()
@@ -965,6 +1006,8 @@ def make_handler(store, hub, monitor):
         # -- GET ------------------------------------------------------------
 
         def do_GET(self):
+            if not self.guard():
+                return
             url = urllib.parse.urlparse(self.path)
             path = url.path
             if path == "/api/state":
@@ -1017,6 +1060,8 @@ def make_handler(store, hub, monitor):
         # -- POST -----------------------------------------------------------
 
         def do_POST(self):
+            if not self.guard(writing=True):
+                return
             path = urllib.parse.urlparse(self.path).path
             body = self.read_body()
             now = int(time.time())

@@ -82,9 +82,13 @@ server at login. The Emacs step runs only if `~/.emacs.d/init.el` exists or
 you pass `--emacs`, and never with `--no-emacs`.
 
 The server is self-managing (launchd at login; `rt`, Emacs and the skill start
-it on demand), binds 127.0.0.1 only, and stores everything in
-`~/.research-threads/` — SQLite plus copied plot files. Logs go to
-`~/.research-threads/server.log`.
+it on demand) and stores everything in `~/.research-threads/` — SQLite plus
+copied plot files. Logs go to `~/.research-threads/server.log`.
+
+It binds 127.0.0.1 only, serves nothing outside `web/` and the plots
+directory, and refuses any request whose `Host` is not localhost or whose
+`Origin` is another site — so neither a page you have open in a browser nor a
+DNS-rebinding attack can reach the API.
 
 ## The views
 
