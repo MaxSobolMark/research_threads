@@ -27,6 +27,12 @@ function esc(s) {
   }[c]));
 }
 
+// Notes are signed by an agent or by a person; only the two agents get their
+// own colour, so any other name is styled the same way.
+function authorClass(author) {
+  return author === "claude" || author === "codex" ? author : "human";
+}
+
 function age(ts) {
   if (!ts) return "";
   const d = Math.max(0, Math.floor(Date.now() / 1000) - ts);
@@ -142,13 +148,15 @@ function itemHTML(t) {
 
 function renderSidebar() {
   const ts = visibleThreads();
-  const active = ts.filter(t => t.open).sort((a, b) =>
+  /* Archiving hides a thread even while its vterm is still running, so
+     `archived` is checked before the open/closed split. */
+  const active = ts.filter(t => t.open && !t.archived).sort((a, b) =>
     (b.pinned - a.pinned) ||
     ((STATUS_RANK[displayStatus(a)] ?? 4) - (STATUS_RANK[displayStatus(b)] ?? 4)) ||
     (b.last_active_at - a.last_active_at));
   const earlier = ts.filter(t => !t.open && !t.archived)
     .sort((a, b) => (b.pinned - a.pinned) || (b.last_active_at - a.last_active_at));
-  const archived = ts.filter(t => !t.open && t.archived)
+  const archived = ts.filter(t => t.archived)
     .sort((a, b) => b.last_active_at - a.last_active_at);
 
   let html = "";
@@ -260,7 +268,7 @@ function makeBubbleEl(t) {
 }
 
 function renderField() {
-  const open = visibleThreads().filter(t => t.open);
+  const open = visibleThreads().filter(t => t.open && !t.archived);
   fieldEmpty.hidden = open.length > 0;
   layoutBubbles(open);
 
@@ -459,7 +467,7 @@ async function refreshPanel() {
     tl += `
     <div class="tl-item">
       <span class="tl-when">${esc(when)}</span>
-      <div class="tl-content"><span class="tl-author ${esc(n.author || "")}">${esc(n.author || "")}</span>${content}</div>
+      <div class="tl-content"><span class="tl-author ${authorClass(n.author)}">${esc(n.author || "")}</span>${content}</div>
     </div>`;
   }
   if (!(t.notes || []).length)
@@ -521,7 +529,7 @@ async function refreshPanel() {
       const save = async () => {
         const text = ta.value.trim();
         if (text && text !== current) {
-          await api("POST", `/api/${kind}`, { thread_id: t.id, text, author: "max" });
+          await api("POST", `/api/${kind}`, { thread_id: t.id, text });
         }
         refreshPanel();
       };
@@ -546,7 +554,7 @@ async function refreshPanel() {
     const text = composer.value.trim();
     if (!text) return;
     composer.value = "";
-    await api("POST", "/api/notes", { thread_id: t.id, text, author: "max" });
+    await api("POST", "/api/notes", { thread_id: t.id, text });
     refreshPanel();
   };
   panelBody.querySelector("#add-note").onclick = submitNote;

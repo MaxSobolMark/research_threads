@@ -39,27 +39,68 @@ Each thread carries:
   (objective, current status, notes, plots, pin/archive/rename, jump to
   Emacs). `/` filters; `#t<id>` deep-links.
 - **Emacs dashboard** — `C-c r` (or `M-x research-threads`). `RET` jumps to
-  the vterm (offers to reopen closed threads), `n` adds a note, `o` opens the
-  thread on the web, `a`/`p` archive/pin, `g` refreshes. Auto-refreshes while
-  visible.
+  the vterm (offers to reopen closed threads), `c` adds a note, `o` opens the
+  thread on the web, `a`/`*` archive/pin (archiving offers to kill the
+  thread's vterm), `A` shows the archived section, `g` refreshes.
+  Auto-refreshes while visible.
 - **`rt` CLI** — everything above, plus `rt threads`, `rt whoami`, `rt open`.
+
+## Requirements
+
+- **macOS** — detection uses `ps`/`lsof`, and the server is started at login
+  by launchd. It runs on Linux if you start it yourself, but that is untested.
+- **Python 3** (stdlib only — no packages to install).
+- **Claude Code and/or Codex**, for the sessions being tracked.
+- **Emacs with [vterm](https://github.com/akermu/emacs-libvterm)** — optional.
+  Without it you get the web app and the CLI; see below.
 
 ## Install / update
 
 ```bash
 ./install.sh          # idempotent; re-run after git pull
+./install.sh --emacs  # also install the Emacs dashboard
+./install.sh --no-emacs
 ./install.sh --uninstall
 ```
 
-Installs: `rt` in `~/.local/bin`, the `research-dashboard` skill for both
-Claude Code and Codex, Codex status hooks (backs up `~/.codex/hooks.json`;
-Codex may ask to re-trust hooks), a launchd agent that starts the server at
-login, and a guarded block in `~/.emacs.d/init.el`.
+Installs: `rt` in `~/.local/bin`, the `research-dashboard` skill for whichever
+of Claude Code / Codex you have, status hooks in `~/.claude/settings.json` and
+`~/.codex/hooks.json` (each backed up first; Codex may ask to re-trust hooks),
+and a launchd agent that starts the server at login. The Emacs dashboard is
+added to `~/.emacs.d/init.el` only if that file exists, or if you pass
+`--emacs`; `--no-emacs` always skips it.
 
 The server is self-managing (launchd at login; `rt`, Emacs, and the skill
 start it on demand), binds 127.0.0.1 only, and stores everything in
 `~/.research-threads/` (SQLite + copied plot files). Logs:
 `~/.research-threads/server.log`.
+
+## Without Emacs
+
+Threads work from any terminal: `rt start` registers the session, and the
+server matches later `rt` calls to it by working directory. You get the web
+app and the CLI; what you give up is the Emacs dashboard, the "open in emacs"
+button, and the live *working / waiting for you* status, which is keyed on the
+vterm name.
+
+To get that status in your own Emacs vterms, export the name the buffer was
+launched with — the hooks key their state files on it:
+
+```elisp
+(let ((process-environment (cons "CLAUDE_VTERM_NAME=my-thread" process-environment)))
+  (vterm "*vterm-my-thread*"))
+```
+
+The Emacs dashboard's `C-n` does exactly this for you.
+
+## Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RESEARCH_THREADS_PORT` | `7878` | port the server binds and `rt` talks to |
+| `RESEARCH_THREADS_DATA` | `~/.research-threads` | database and copied plots |
+| `RESEARCH_THREADS_USER` | your login name | how your own notes are signed |
+| `RT_AUTHOR` | inferred | override the author `rt` posts as |
 
 ## Layout
 
@@ -69,6 +110,7 @@ web/                          the web app (vanilla HTML/CSS/JS, no build step)
 bin/rt                        CLI used by agents and humans
 emacs/research-threads.el     the Emacs dashboard
 skills/research-dashboard/    SKILL.md for Claude Code and Codex
+hooks/vterm-state.sh          status hook the agents run (wired by install.sh)
 launchd/                      launch-at-login plist template
 install.sh                    idempotent installer / uninstaller
 ```
@@ -89,3 +131,7 @@ POST /api/threads/<id>/<action>     archive|unarchive|pin|unpin|rename|focus
 
 `focus` switches Emacs to the thread's vterm via `emacsclient` (the Emacs
 dashboard enables `server-start` so this works).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

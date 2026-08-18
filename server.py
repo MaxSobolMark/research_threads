@@ -17,6 +17,7 @@ Detection strategy (macOS):
     needs-attention.
 """
 
+import getpass
 import json
 import os
 import queue
@@ -37,6 +38,8 @@ from pathlib import Path
 
 PORT = int(os.environ.get("RESEARCH_THREADS_PORT", "7878"))
 HOME = Path.home()
+# How notes you write yourself are signed, next to "claude" / "codex".
+USER = os.environ.get("RESEARCH_THREADS_USER") or getpass.getuser()
 DATA_DIR = Path(os.environ.get("RESEARCH_THREADS_DATA", HOME / ".research-threads"))
 PLOTS_DIR = DATA_DIR / "plots"
 DB_PATH = DATA_DIR / "threads.sqlite"
@@ -104,7 +107,7 @@ CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY,
     thread_id INTEGER NOT NULL REFERENCES threads(id),
     ts INTEGER NOT NULL,
-    author TEXT,                       -- 'max' | 'claude' | 'codex' | ...
+    author TEXT,                       -- USER | 'claude' | 'codex' | ...
     kind TEXT NOT NULL DEFAULT 'note', -- 'note' | 'plot' | 'link'
     text TEXT,
     path TEXT                          -- for plots: path relative to plots dir
@@ -824,7 +827,7 @@ def snapshot(store, monitor):
             "status_since": (ev or {}).get("ts"),
             "latest_note": latest_notes.get(t["id"]),
         })
-    return {"threads": out, "now": int(time.time())}
+    return {"threads": out, "now": int(time.time()), "user": USER}
 
 
 def thread_detail(store, monitor, tid):
@@ -967,7 +970,7 @@ def make_handler(store, hub, monitor):
             if path == "/api/state":
                 return self.send_json(snapshot(store, monitor))
             if path == "/api/health":
-                return self.send_json({"ok": True, "pid": os.getpid()})
+                return self.send_json({"ok": True, "pid": os.getpid(), "user": USER})
             m = re.match(r"^/api/threads/(\d+)$", path)
             if m:
                 detail = thread_detail(store, monitor, int(m.group(1)))
@@ -1054,7 +1057,7 @@ def make_handler(store, hub, monitor):
                 store.execute(
                     "INSERT INTO notes (thread_id, ts, author, kind, text)"
                     " VALUES (?, ?, ?, ?, ?)",
-                    (tid, now, body.get("author") or "unknown",
+                    (tid, now, body.get("author") or USER,
                      body.get("kind") or "note", text),
                 )
                 store.touch(tid, now)
@@ -1085,7 +1088,7 @@ def make_handler(store, hub, monitor):
                 store.execute(
                     "INSERT INTO notes (thread_id, ts, author, kind, text, path)"
                     " VALUES (?, ?, ?, 'plot', ?, ?)",
-                    (tid, now, body.get("author") or "unknown",
+                    (tid, now, body.get("author") or USER,
                      body.get("caption") or src.name, rel),
                 )
                 store.touch(tid, now)

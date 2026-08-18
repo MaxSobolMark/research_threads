@@ -24,10 +24,11 @@ Options:
   -o, --objective TEXT one-line objective (with `rt start`)
   -m, --message TEXT   caption for plots / links
   -k, --kind KIND      note kind (default: note)
-  -a, --author NAME    override author (default: inferred agent or 'max')
+  -a, --author NAME    override author (default: the agent, or your username)
   -t, --thread ID      target an explicit thread id
 """
 
+import getpass
 import json
 import os
 import subprocess
@@ -48,7 +49,7 @@ def infer_author():
         return "claude"
     if os.environ.get("CODEX_HOME") or os.environ.get("CODEX_SANDBOX"):
         return "codex"
-    return "max"
+    return getpass.getuser()
 
 
 def identity(args):

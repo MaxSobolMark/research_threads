@@ -1,6 +1,5 @@
 ;;; research-threads.el --- Dashboard for AI research threads -*- lexical-binding: t -*-
 
-;; Author: Max Sobol Mark
 ;; Keywords: tools, convenience
 ;; Package-Requires: ((emacs "29.1"))
 
@@ -21,7 +20,8 @@
 ;;   c    add a note to the thread at point
 ;;   x    close the thread's vterm (kills its agent session)
 ;;   o    open the thread in the web dashboard
-;;   a    archive / unarchive the thread at point
+;;   a    archive / unarchive the thread at point (offers to kill its vterm)
+;;   A    show / hide the Archived section
 ;;   *    pin / unpin the thread at point
 ;;   w    open the web dashboard
 ;;   g    refresh
@@ -240,6 +240,16 @@
 (defvar research-threads--expanded (make-hash-table :test 'eql)
   "Ids of threads whose detail block is currently expanded.")
 
+(defvar research-threads--show-archived nil
+  "Non-nil while the Archived section is expanded.")
+
+(defun research-threads--archived-p (thread)
+  "Non-nil if THREAD is archived.
+Archiving hides a thread whether or not its vterm is still running,
+so this takes precedence over the open/closed sections."
+  (let ((v (alist-get 'archived thread)))
+    (and v (not (eql v 0)))))
+
 (defun research-threads--insert-detail-line (bullet text face)
   "Insert an indented, filled detail line: BULLET then TEXT in FACE."
   (let ((start (point))
@@ -339,7 +349,9 @@
                              (- research-threads--width 71))))
                (at-point (research-threads--thread-at-point))
                (saved-id (and at-point (alist-get 'id at-point)))
-               (open (seq-filter (lambda (th) (alist-get 'open th)) threads))
+               (archived (seq-filter #'research-threads--archived-p threads))
+               (live (seq-remove #'research-threads--archived-p threads))
+               (open (seq-filter (lambda (th) (alist-get 'open th)) live))
                (needs (seq-filter
                        (lambda (th) (member (alist-get 'status th)
                                             '("needs-attention" "needs-permission")))
@@ -352,10 +364,7 @@
                (ready (seq-filter
                        (lambda (th) (equal (research-threads--display-status th) "idle"))
                        open))
-               (earlier (seq-filter
-                         (lambda (th) (and (not (alist-get 'open th))
-                                           (eq (alist-get 'archived th) 0)))
-                         threads)))
+               (earlier (seq-remove (lambda (th) (alist-get 'open th)) live)))
           (erase-buffer)
           (insert "\n  " (propertize "Research Threads" 'face 'research-threads-title)
                   "   "
@@ -368,9 +377,15 @@
           (research-threads--insert-section "Working" working)
           (research-threads--insert-section "Ready" ready)
           (research-threads--insert-section "Earlier" earlier)
+          (if research-threads--show-archived
+              (research-threads--insert-section "Archived" archived)
+            (when archived
+              (insert "\n"
+                      (propertize (format "  %d archived — A to show\n" (length archived))
+                                  'face 'research-threads-faint))))
           (insert "\n"
                   (propertize
-                   "  n/p move · C-n new · TAB details · RET jump · c note · x close · a archive · * pin · g refresh · q quit\n"
+                   "  n/p move · C-n new · TAB details · RET jump · c note · x close · a archive · A archived · * pin · g refresh · q quit\n"
                    'face 'research-threads-faint))
           (goto-char (point-min))
           (unless (and saved-id (research-threads--goto-thread saved-id))
@@ -460,14 +475,33 @@
     (when research-threads--snapshot
       (research-threads--render research-threads--snapshot))))
 
+(defun research-threads--vterm-name (thread)
+  "Name of THREAD's vterm, or nil if it is not a vterm thread."
+  (let ((key (alist-get 'key thread)))
+    (and key (string-prefix-p "vterm:" key)
+         (substring key (length "vterm:")))))
+
+(defun research-threads--vterm-buffer (thread)
+  "THREAD's vterm buffer, if it is still open."
+  (when-let ((name (research-threads--vterm-name thread)))
+    (get-buffer (format "*vterm-%s*" name))))
+
+(defun research-threads--kill-vterm (buf)
+  "Kill vterm BUF, ending its agent session without the exit prompt."
+  (when (buffer-live-p buf)
+    (when-let ((proc (get-buffer-process buf)))
+      (set-process-query-on-exit-flag proc nil))
+    (kill-buffer buf)
+    ;; The server only notices the process is gone after a poll or two.
+    (run-with-timer 6 nil #'research-threads--refresh)))
+
 (defun research-threads-visit ()
   "Jump to the vterm of the thread at point, reopening it if needed."
   (interactive)
   (let-alist (research-threads--require-thread)
     (when .unread                       ; looking at the vterm counts as reading
       (research-threads--post (format "/api/threads/%s/mark_read" .id) '() nil))
-    (let* ((vterm-name (and (string-prefix-p "vterm:" .key)
-                            (substring .key (length "vterm:"))))
+    (let* ((vterm-name (research-threads--vterm-name (research-threads--thread-at-point)))
            (buf-name (and vterm-name (format "*vterm-%s*" vterm-name))))
       (cond
        ((and buf-name (get-buffer buf-name))
@@ -492,24 +526,48 @@
     (when (string-empty-p (string-trim text))
       (user-error "Empty note"))
     (research-threads--post
-     "/api/notes" `((thread_id . ,id) (text . ,text) (author . "max"))
+     "/api/notes" `((thread_id . ,id) (text . ,text))
      (lambda (_) (message "Noted → %s" name) (research-threads--refresh)))))
 
 (defun research-threads-toggle-archive ()
-  "Archive or unarchive the thread at point."
+  "Archive or unarchive the thread at point.
+Archiving offers to kill the thread's vterm too, since archiving means
+the work is done.  Declining leaves the session running; the thread is
+archived either way and lives in the Archived section (`A' to show)."
   (interactive)
-  (let-alist (research-threads--require-thread)
+  (let* ((thread (research-threads--require-thread))
+         (name (alist-get 'name thread))
+         (archived (research-threads--archived-p thread))
+         (action (if archived "unarchive" "archive"))
+         (buf (unless archived (research-threads--vterm-buffer thread)))
+         (kill (and buf (y-or-n-p (format "Archive %s — kill its vterm too? " name)))))
     (research-threads--post
-     (format "/api/threads/%d/%s" .id (if (eq .archived 0) "archive" "unarchive"))
-     '() (lambda (_) (research-threads--refresh)))))
+     (format "/api/threads/%s/%s" (alist-get 'id thread) action)
+     '() (lambda (_)
+           (when kill (research-threads--kill-vterm buf))
+           (message "%sd %s%s" (capitalize action) name
+                    (if kill " (vterm killed)" ""))
+           (research-threads--refresh)))))
+
+(defun research-threads-toggle-show-archived ()
+  "Show or hide the Archived section."
+  (interactive)
+  (setq research-threads--show-archived (not research-threads--show-archived))
+  (when research-threads--snapshot
+    (research-threads--render research-threads--snapshot)))
 
 (defun research-threads-toggle-pin ()
   "Pin or unpin the thread at point."
   (interactive)
-  (let-alist (research-threads--require-thread)
+  (let* ((thread (research-threads--require-thread))
+         (name (alist-get 'name thread))
+         (pinned (alist-get 'pinned thread))
+         (action (if (and pinned (not (eql pinned 0))) "unpin" "pin")))
     (research-threads--post
-     (format "/api/threads/%d/%s" .id (if (eq .pinned 0) "pin" "unpin"))
-     '() (lambda (_) (research-threads--refresh)))))
+     (format "/api/threads/%s/%s" (alist-get 'id thread) action)
+     '() (lambda (_)
+           (message "%sned %s" (capitalize action) name)
+           (research-threads--refresh)))))
 
 (defun research-threads-web-thread ()
   "Open the thread at point in the web dashboard."
@@ -520,21 +578,16 @@
 (defun research-threads-close-vterm ()
   "Kill the vterm buffer of the thread at point (ends its agent session)."
   (interactive)
-  (let-alist (research-threads--require-thread)
-    (let* ((vterm-name (and (string-prefix-p "vterm:" .key)
-                            (substring .key (length "vterm:"))))
-           (buf (and vterm-name (get-buffer (format "*vterm-%s*" vterm-name)))))
-      (cond
-       ((null buf)
-        (message "No open vterm for %s" .name))
-       ((y-or-n-p (format "Close vterm for %s (kills its session)? " .name))
-        (when-let ((proc (get-buffer-process buf)))
-          (set-process-query-on-exit-flag proc nil))
-        (kill-buffer buf)
-        (message "Closed %s" (buffer-name buf))
-        ;; The server notices the process is gone within a couple of polls;
-        ;; refresh shortly after so the thread moves to Earlier.
-        (run-with-timer 6 nil #'research-threads--refresh))))))
+  (let* ((thread (research-threads--require-thread))
+         (name (alist-get 'name thread))
+         (buf (research-threads--vterm-buffer thread)))
+    (cond
+     ((null buf)
+      (message "No open vterm for %s" name))
+     ((y-or-n-p (format "Close vterm for %s (kills its session)? " name))
+      (let ((buf-name (buffer-name buf)))
+        (research-threads--kill-vterm buf)
+        (message "Closed %s" buf-name))))))
 
 (defun research-threads-new ()
   "Start a new research thread: prompt for name, agent and directory,
@@ -588,6 +641,7 @@ register the thread, then open a vterm there running the chosen agent."
                    ("o"     research-threads-web-thread)
                    ("x"     research-threads-close-vterm)
                    ("a"     research-threads-toggle-archive)
+                   ("A"     research-threads-toggle-show-archived)
                    ("*"     research-threads-toggle-pin)
                    ("w"     research-threads-web)
                    ("g"     research-threads--refresh)))

@@ -21,7 +21,7 @@
 
   --claude: #C15F3C;      /* anthropic clay */
   --codex: #17877A;
-  --max: #6C5FB0;
+  --human: #6C5FB0;
   --accent: #6C5FB0;
 
   --shadow: 0 2px 6px rgba(70, 60, 30, 0.06), 0 10px 30px rgba(70, 60, 30, 0.07);
@@ -488,7 +488,7 @@ body {
 .tl-author { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.06em; margin-right: 0.45rem; }
 .tl-author.claude { color: var(--claude); }
 .tl-author.codex { color: var(--codex); }
-.tl-author.max { color: var(--max); }
+.tl-author.human { color: var(--human); }
 .tl-content a { color: var(--accent); text-decoration: none; }
 .tl-content a:hover { text-decoration: underline; }
 .tl-content code {
