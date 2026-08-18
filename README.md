@@ -1,10 +1,11 @@
 # Research Threads
 
-A local dashboard for the research threads you choose to track — each one a
-Claude Code or Codex session inside an Emacs vterm. You start a thread by
-telling your agent to track it; from then on the session is followed
-automatically, keeps its full history after it closes, and the agent
-maintains the thread's objective, current status, notes and plots.
+A local dashboard for the research threads you choose to track. A thread is a
+Claude Code or Codex session you told your agent to follow: from then on the
+session is tracked automatically, keeps its full history after it closes, and
+the agent maintains the thread's objective, current status, notes and plots.
+
+It works from any terminal. Emacs is supported, and optional.
 
 ![The Research Threads dashboard: active threads drifting as bubbles, with the sidebar listing active and past threads](docs/screenshot.png)
 
@@ -17,10 +18,10 @@ you:    "track this as a research thread about value-function collapse"
 agent:  rt start value-fn-collapse -o "Test whether the value fn explains collapse"
 ```
 
-That one command registers the vterm as a thread. The server then follows it
-on its own: whether it is open, working, waiting for your input, or closed
-(via `ps` + `CLAUDE_VTERM_NAME` + the hook state files in `~/.claude/state/`).
-Ordinary coding sessions are never tracked — no registration, no thread.
+That one command registers the session as a thread. The server then follows it
+on its own — open, working, waiting for your input, or closed — by watching
+the process table and the state files the agents' hooks write. Ordinary coding
+sessions are never tracked: no registration, no thread.
 
 Each thread carries:
 
@@ -32,29 +33,37 @@ Each thread carries:
 - **Notes / plots / links** — an append-only timeline (`rt note`, `rt plot`,
   `rt link`), written by agents and by you.
 
-## The three views
+## Quick start
 
-- **Web app** — http://localhost:7878 · ivory light theme. Collapsible left
-  sidebar lists active threads and history; the center shows each active
-  thread as a floating bubble — gently drifting, breathing while the agent
-  works, rippling when it needs you. Click anything for the detail panel
-  (objective, current status, notes, plots, pin/archive/rename, jump to
-  Emacs). `/` filters; `#t<id>` deep-links.
-- **Emacs dashboard** — `C-c r` (or `M-x research-threads`). `RET` jumps to
-  the vterm (offers to reopen closed threads), `c` adds a note, `o` opens the
-  thread on the web, `a`/`*` archive/pin (archiving offers to kill the
-  thread's vterm), `A` shows the archived section, `g` refreshes.
-  Auto-refreshes while visible.
-- **`rt` CLI** — everything above, plus `rt threads`, `rt whoami`, `rt open`.
+```bash
+./install.sh                       # see Install below for what it touches
+cd ~/dev/my-project && claude      # or codex — any terminal
+```
+
+Then tell the agent: *"track this as a research thread about X"*. It runs
+`rt start`, and the thread shows up at http://localhost:7878. You can do the
+same by hand:
+
+```bash
+rt start value-fn-collapse -o "Test whether the value fn explains collapse"
+rt note "lr=3e-4 diverges after 40k steps"
+rt open                            # open the dashboard
+```
+
+No thread id is ever needed: `rt` finds the thread from the session it runs
+in. For more precise tracking than the working directory alone can give, see
+[Naming your sessions](#naming-your-sessions).
 
 ## Requirements
 
-- **macOS** — detection uses `ps`/`lsof`, and the server is started at login
-  by launchd. It runs on Linux if you start it yourself, but that is untested.
-- **Python 3** (stdlib only — no packages to install).
-- **Claude Code and/or Codex**, for the sessions being tracked.
-- **Emacs with [vterm](https://github.com/akermu/emacs-libvterm)** — optional.
-  Without it you get the web app and the CLI; see below.
+- **macOS** — session detection uses `ps` and `lsof`, and the server is
+  started at login by launchd. It runs on Linux if you start it yourself,
+  but that is untested.
+- **Python 3** — stdlib only, nothing to install.
+- **Claude Code and/or Codex** — the sessions being tracked.
+
+Optional: **Emacs with [vterm](https://github.com/akermu/emacs-libvterm)**,
+for the Emacs dashboard.
 
 ## Install / update
 
@@ -65,35 +74,69 @@ Each thread carries:
 ./install.sh --uninstall
 ```
 
-Installs: `rt` in `~/.local/bin`, the `research-dashboard` skill for whichever
-of Claude Code / Codex you have, status hooks in `~/.claude/settings.json` and
-`~/.codex/hooks.json` (each backed up first; Codex may ask to re-trust hooks),
-and a launchd agent that starts the server at login. The Emacs dashboard is
-added to `~/.emacs.d/init.el` only if that file exists, or if you pass
-`--emacs`; `--no-emacs` always skips it.
+Installs `rt` into `~/.local/bin`, the `research-dashboard` skill for
+whichever of Claude Code / Codex you have, status hooks in
+`~/.claude/settings.json` and `~/.codex/hooks.json` (each backed up first;
+Codex may ask to re-trust its hooks), and a launchd agent that starts the
+server at login. The Emacs step runs only if `~/.emacs.d/init.el` exists or
+you pass `--emacs`, and never with `--no-emacs`.
 
-The server is self-managing (launchd at login; `rt`, Emacs, and the skill
-start it on demand), binds 127.0.0.1 only, and stores everything in
-`~/.research-threads/` (SQLite + copied plot files). Logs:
+The server is self-managing (launchd at login; `rt`, Emacs and the skill start
+it on demand), binds 127.0.0.1 only, and stores everything in
+`~/.research-threads/` — SQLite plus copied plot files. Logs go to
 `~/.research-threads/server.log`.
 
-## Without Emacs
+## The views
 
-Threads work from any terminal: `rt start` registers the session, and the
-server matches later `rt` calls to it by working directory. You get the web
-app and the CLI; what you give up is the Emacs dashboard, the "open in emacs"
-button, and the live *working / waiting for you* status, which is keyed on the
-vterm name.
+- **Web app** — http://localhost:7878 · ivory light theme. A collapsible left
+  sidebar lists active threads and history; the center shows each active
+  thread as a floating bubble — gently drifting, breathing while the agent
+  works, rippling when it needs you. Click anything for the detail panel
+  (objective, current status, notes, plots, pin/archive/rename). `/` filters;
+  `#t<id>` deep-links.
+- **`rt` CLI** — everything above, plus `rt threads`, `rt whoami`, `rt open`.
+- **Emacs dashboard** *(optional)* — see below.
 
-To get that status in your own Emacs vterms, export the name the buffer was
-launched with — the hooks key their state files on it:
+## Naming your sessions
 
-```elisp
-(let ((process-environment (cons "CLAUDE_VTERM_NAME=my-thread" process-environment)))
-  (vterm "*vterm-my-thread*"))
+By default a thread is tied to the directory the agent runs in. That is enough
+to see which threads are open and which have closed, and the dashboard infers
+*working* vs *ready* from CPU use. Two things stay out of reach: the exact
+status the agent reports (**needs permission**, **needs attention**), and
+posting from anywhere other than that exact directory — a subdirectory will
+not match.
+
+Both come free if you give the session a name before launching the agent:
+
+```bash
+CLAUDE_VTERM_NAME=value-fn-collapse claude
 ```
 
-The Emacs dashboard's `C-n` does exactly this for you.
+The hooks key their state files on that name and the server reads them, so
+status becomes exact and `rt` finds the thread from any directory. The
+variable is named for Emacs vterm, where it is set for you, but nothing about
+it needs Emacs — a plain shell, a tmux pane or an iTerm tab all work. A shell
+function is the easy way to make it habitual:
+
+```bash
+rtclaude() { CLAUDE_VTERM_NAME="$1" claude; }   # rtclaude value-fn-collapse
+```
+
+## Emacs (optional)
+
+`./install.sh --emacs` adds the dashboard to your `init.el`, bound to `C-c r`
+(or `M-x research-threads`). It names every vterm it launches, so threads
+started there get exact status automatically.
+
+`C-n` starts a new thread — it asks for a name, agent and directory, registers
+the thread and opens a vterm running the agent. `RET` jumps to a thread's
+vterm and offers to reopen closed ones, `c` adds a note, `o` opens the thread
+on the web, `x` closes its vterm, `a`/`*` archive/pin (archiving offers to
+kill the vterm), `A` shows the archived section, `g` refreshes. The buffer
+auto-refreshes while visible.
+
+With Emacs running a server, the web app's *open in emacs* button jumps
+straight to a thread's vterm.
 
 ## Configuration
 
@@ -103,6 +146,7 @@ The Emacs dashboard's `C-n` does exactly this for you.
 | `RESEARCH_THREADS_DATA` | `~/.research-threads` | database and copied plots |
 | `RESEARCH_THREADS_USER` | your login name | how your own notes are signed |
 | `RT_AUTHOR` | inferred | override the author `rt` posts as |
+| `CLAUDE_VTERM_NAME` | unset | name of this session, for exact status |
 
 ## Layout
 
