@@ -6,6 +6,8 @@ telling your agent to track it; from then on the session is followed
 automatically, keeps its full history after it closes, and the agent
 maintains the thread's objective, current status, notes and plots.
 
+![The Research Threads dashboard: active threads drifting as bubbles, with the sidebar listing active and past threads](docs/screenshot.png)
+
 ## The model
 
 Threads are **explicitly started, automatically followed**:
